@@ -27,7 +27,7 @@ class RateLimiter:
 
     async def wait_if_needed(self) -> None:
         async with self._lock:
-            if self._remaining is None or self._remaining >= self._buffer:
+            if self._remaining is None or self._remaining > 0:
                 return
 
             if self._reset_at is None:

@@ -9,10 +9,10 @@ from src.infrastructure.rate_limiter import RateLimiter
 
 
 @pytest.mark.asyncio
-async def test_wait_if_needed_does_not_sleep_when_remaining_above_buffer() -> None:
+async def test_wait_if_needed_does_not_sleep_when_remaining_above_zero() -> None:
     limiter = RateLimiter(buffer=100)
     reset_at = datetime.now(timezone.utc) + timedelta(hours=1)
-    limiter.update_from_response(remaining=5000, reset_at=reset_at)
+    limiter.update_from_response(remaining=50, reset_at=reset_at)
 
     start = asyncio.get_event_loop().time()
     await limiter.wait_if_needed()
@@ -22,10 +22,10 @@ async def test_wait_if_needed_does_not_sleep_when_remaining_above_buffer() -> No
 
 
 @pytest.mark.asyncio
-async def test_wait_if_needed_sleeps_when_below_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wait_if_needed_sleeps_when_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
     limiter = RateLimiter(buffer=100)
     reset_at = datetime.now(timezone.utc) + timedelta(seconds=2)
-    limiter.update_from_response(remaining=50, reset_at=reset_at)
+    limiter.update_from_response(remaining=0, reset_at=reset_at)
 
     sleep_calls: list[float] = []
 
