@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import re
 from datetime import date, timedelta
 from typing import Optional
 
 from src.domain.models import CrawlCheckpoint, Repository
 from src.infrastructure.github_client import GitHubClient
 from src.repositories.repository_repo import CrawlRepo, RepositoryRepo
+
+SEARCH_RESULT_LIMIT = 1000
+_DATE_RANGE_PATTERN = re.compile(r"created:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})")
 
 
 def _log(message: str) -> None:
@@ -36,6 +40,7 @@ class CrawlerService:
         self._repos_crawled = 0
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
+        self._window_queue: asyncio.Queue[CrawlCheckpoint] | None = None
 
     async def run(self, resume_run_id: Optional[int] = None) -> int:
         if resume_run_id:
@@ -64,6 +69,7 @@ class CrawlerService:
         )
 
         queue: asyncio.Queue[CrawlCheckpoint] = asyncio.Queue()
+        self._window_queue = queue
         for checkpoint in checkpoints:
             queue.put_nowait(checkpoint)
 
@@ -117,6 +123,35 @@ class CrawlerService:
                 after=cursor,
             )
 
+            if (
+                cursor is None
+                and page.repository_count > SEARCH_RESULT_LIMIT
+                and should_bisect_window(checkpoint.window_query)
+            ):
+                sub_queries = bisect_window_query(checkpoint.window_query)
+                _log(
+                    f"Bisecting window ({page.repository_count:,} results): "
+                    f"{checkpoint.window_query} -> {len(sub_queries)} sub-windows"
+                )
+                for sub_query in sub_queries:
+                    self._window_queue.put_nowait(
+                        CrawlCheckpoint(
+                            id=None,
+                            crawl_run_id=run_id,
+                            window_query=sub_query,
+                            last_cursor=None,
+                            repos_fetched=0,
+                            completed=False,
+                        )
+                    )
+                if checkpoint.id is not None:
+                    await self._crawl_repo.update_checkpoint(
+                        checkpoint.id,
+                        repos_fetched=fetched_in_window,
+                        completed=True,
+                    )
+                return
+
             if not page.repositories:
                 break
 
@@ -139,21 +174,23 @@ class CrawlerService:
                 pending_batch = []
 
             cursor = page.end_cursor
-            await self._crawl_repo.update_checkpoint(
-                checkpoint.id,
-                last_cursor=cursor,
-                repos_fetched=fetched_in_window,
-            )
+            if checkpoint.id is not None:
+                await self._crawl_repo.update_checkpoint(
+                    checkpoint.id,
+                    last_cursor=cursor,
+                    repos_fetched=fetched_in_window,
+                )
 
             if not page.has_next_page or await self._should_stop():
                 break
 
-        await self._crawl_repo.update_checkpoint(
-            checkpoint.id,
-            last_cursor=cursor,
-            repos_fetched=fetched_in_window,
-            completed=True,
-        )
+        if checkpoint.id is not None:
+            await self._crawl_repo.update_checkpoint(
+                checkpoint.id,
+                last_cursor=cursor,
+                repos_fetched=fetched_in_window,
+                completed=True,
+            )
 
     async def _flush_batch(self, batch: list[Repository], run_id: int) -> None:
         if not batch:
@@ -184,7 +221,7 @@ class CrawlerService:
 
 
 def generate_search_windows(start: date, end: date) -> list[str]:
-    """Generate monthly search windows, bisecting dense months into weeks."""
+    """Generate monthly search windows; dense windows are bisected at crawl time."""
     windows: list[str] = []
     current = date(start.year, start.month, 1)
 
@@ -194,9 +231,7 @@ def generate_search_windows(start: date, end: date) -> list[str]:
         if month_end > end:
             month_end = end
 
-        windows.extend(
-            _split_window_if_needed(current, month_end)
-        )
+        windows.append(_build_query(current, month_end))
 
         if current.month == 12:
             current = date(current.year + 1, 1, 1)
@@ -206,20 +241,35 @@ def generate_search_windows(start: date, end: date) -> list[str]:
     return windows
 
 
-def _split_window_if_needed(start: date, end: date) -> list[str]:
-    """Return weekly sub-windows for long ranges to stay under the 1,000-result cap."""
-    days = (end - start).days + 1
-    if days <= 7:
-        return [_build_query(start, end)]
+def parse_window_dates(query: str) -> tuple[date, date] | None:
+    match = _DATE_RANGE_PATTERN.search(query)
+    if not match:
+        return None
+    return date.fromisoformat(match.group(1)), date.fromisoformat(match.group(2))
 
-    windows: list[str] = []
-    current = start
-    while current <= end:
-        week_end = min(current + timedelta(days=6), end)
-        windows.append(_build_query(current, week_end))
-        current = week_end + timedelta(days=1)
 
-    return windows
+def should_bisect_window(query: str) -> bool:
+    dates = parse_window_dates(query)
+    if dates is None:
+        return False
+    start, end = dates
+    return (end - start).days >= 1
+
+
+def bisect_window_query(query: str) -> list[str]:
+    dates = parse_window_dates(query)
+    if dates is None:
+        return [query]
+
+    start, end = dates
+    if start >= end:
+        return [query]
+
+    midpoint = start + timedelta(days=(end - start).days // 2)
+    return [
+        _build_query(start, midpoint),
+        _build_query(midpoint + timedelta(days=1), end),
+    ]
 
 
 def _build_query(start: date, end: date) -> str:

@@ -11,6 +11,7 @@ from src.infrastructure.rate_limiter import RateLimitExceeded, RateLimiter, Tran
 SEARCH_QUERY = """
 query SearchRepos($query: String!, $first: Int!, $after: String) {
   search(query: $query, type: REPOSITORY, first: $first, after: $after) {
+    repositoryCount
     pageInfo {
       hasNextPage
       endCursor
@@ -127,6 +128,7 @@ class GitHubClient:
             has_next_page=page_info["hasNextPage"],
             end_cursor=page_info.get("endCursor"),
             rate_limit=rate_limit_info,
+            repository_count=search.get("repositoryCount", 0),
         )
 
     @staticmethod

@@ -82,6 +82,7 @@ class RepositoryRepo(BaseRepository):
                         created_at, pushed_at, NOW(), NOW()
                     FROM repos_staging
                     ON CONFLICT (github_id) DO UPDATE SET
+                        crawled_at = NOW(),
                         name_with_owner = EXCLUDED.name_with_owner,
                         owner = EXCLUDED.owner,
                         name = EXCLUDED.name,
@@ -92,13 +93,15 @@ class RepositoryRepo(BaseRepository):
                         url = EXCLUDED.url,
                         created_at = EXCLUDED.created_at,
                         pushed_at = EXCLUDED.pushed_at,
-                        crawled_at = NOW(),
-                        updated_at = NOW()
-                    WHERE repositories.star_count IS DISTINCT FROM EXCLUDED.star_count
-                       OR repositories.name_with_owner IS DISTINCT FROM EXCLUDED.name_with_owner
-                       OR repositories.description IS DISTINCT FROM EXCLUDED.description
-                       OR repositories.primary_language IS DISTINCT FROM EXCLUDED.primary_language
-                       OR repositories.pushed_at IS DISTINCT FROM EXCLUDED.pushed_at
+                        updated_at = CASE
+                            WHEN repositories.star_count IS DISTINCT FROM EXCLUDED.star_count
+                              OR repositories.name_with_owner IS DISTINCT FROM EXCLUDED.name_with_owner
+                              OR repositories.description IS DISTINCT FROM EXCLUDED.description
+                              OR repositories.primary_language IS DISTINCT FROM EXCLUDED.primary_language
+                              OR repositories.pushed_at IS DISTINCT FROM EXCLUDED.pushed_at
+                            THEN NOW()
+                            ELSE repositories.updated_at
+                        END
                     """
                 )
 

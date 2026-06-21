@@ -61,3 +61,4 @@ class SearchPage:
     has_next_page: bool
     end_cursor: Optional[str]
     rate_limit: RateLimitInfo
+    repository_count: int = 0

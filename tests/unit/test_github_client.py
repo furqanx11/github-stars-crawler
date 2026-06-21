@@ -26,6 +26,7 @@ def github_client(rate_limiter: RateLimiter) -> GitHubClient:
 def test_map_search_page_filters_null_nodes(github_client: GitHubClient) -> None:
     payload = {
         "search": {
+            "repositoryCount": 1,
             "pageInfo": {"hasNextPage": False, "endCursor": "cursor123"},
             "nodes": [
                 None,
@@ -62,6 +63,55 @@ def test_map_search_page_filters_null_nodes(github_client: GitHubClient) -> None
     assert repo.primary_language == "JavaScript"
     assert page.has_next_page is False
     assert page.end_cursor == "cursor123"
+    assert page.repository_count == 1
+
+
+@pytest.mark.asyncio
+async def test_search_repositories_mocks_graphql_layer(rate_limiter: RateLimiter) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    client = GitHubClient(
+        token="test-token",
+        graphql_url="https://api.github.com/graphql",
+        rate_limiter=rate_limiter,
+        page_size=100,
+    )
+
+    graphql_payload = {
+        "search": {
+            "repositoryCount": 1,
+            "pageInfo": {"hasNextPage": False, "endCursor": "abc"},
+            "nodes": [
+                {
+                    "id": "R_kgDO",
+                    "nameWithOwner": "octocat/Hello-World",
+                    "owner": {"login": "octocat"},
+                    "name": "Hello-World",
+                    "stargazerCount": 100,
+                    "description": None,
+                    "url": "https://github.com/octocat/Hello-World",
+                    "primaryLanguage": None,
+                    "isFork": False,
+                    "createdAt": "2011-01-26T19:01:12Z",
+                    "pushedAt": "2011-01-26T19:14:43Z",
+                }
+            ],
+        },
+        "rateLimit": {
+            "cost": 1,
+            "remaining": 4999,
+            "resetAt": "2026-06-20T18:00:00Z",
+        },
+    }
+
+    with patch.object(client, "_post_graphql", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = graphql_payload
+        page = await client.search_repositories("is:public stars:>1")
+
+    mock_post.assert_awaited_once()
+    assert page.repository_count == 1
+    assert len(page.repositories) == 1
+    assert page.repositories[0].star_count == 100
 
 
 def test_map_repository_handles_missing_optional_fields(github_client: GitHubClient) -> None:
