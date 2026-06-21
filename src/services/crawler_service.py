@@ -80,6 +80,11 @@ class CrawlerService:
                 except asyncio.QueueEmpty:
                     return
                 await self._process_checkpoint(checkpoint, run_id)
+            while True:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
 
         try:
             workers = [
@@ -128,6 +133,8 @@ class CrawlerService:
                 and page.repository_count > SEARCH_RESULT_LIMIT
                 and should_bisect_window(checkpoint.window_query)
             ):
+                if self._stop_event.is_set():
+                    return
                 sub_queries = bisect_window_query(checkpoint.window_query)
                 _log(
                     f"Bisecting window ({page.repository_count:,} results): "
