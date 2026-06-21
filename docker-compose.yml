@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: github_stars
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d github_stars"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  setup:
+    build: .
+    command: ["setup"]
+    environment:
+      DOCKER: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/github_stars
+    depends_on:
+      db:
+        condition: service_healthy
+
+  crawler:
+    build: .
+    command: ["crawl"]
+    environment:
+      DOCKER: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/github_stars
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      CRAWL_TARGET: ${CRAWL_TARGET:-100000}
+      BATCH_SIZE: ${BATCH_SIZE:-500}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-3}
+      RATE_LIMIT_BUFFER: ${RATE_LIMIT_BUFFER:-100}
+    depends_on:
+      db:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+
+  api:
+    build: .
+    command: ["serve"]
+    environment:
+      DOCKER: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/github_stars
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

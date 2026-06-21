@@ -1,0 +1,70 @@
+name: Crawl GitHub Stars
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: github_stars
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d github_stars"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/github_stars
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CRAWL_TARGET: 100000
+      BATCH_SIZE: 500
+      MAX_CONCURRENCY: 3
+      RATE_LIMIT_BUFFER: 100
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: setup-postgres
+        run: python -m src.db.setup
+
+      - name: crawl-stars
+        run: python -m src.main crawl
+
+      - name: Dump database
+        run: python -m src.db.dump --output repos_dump.csv
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repos-data
+          path: repos_dump.csv
+          retention-days: 7
+
+      - name: Run tests
+        run: pytest tests/unit -v
