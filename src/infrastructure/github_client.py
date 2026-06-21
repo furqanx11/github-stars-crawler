@@ -55,6 +55,10 @@ class GitHubClient:
         self._rate_limiter = rate_limiter
         self._page_size = page_size
 
+    @property
+    def rate_limit_remaining(self) -> int | None:
+        return self._rate_limiter.remaining
+
     async def search_repositories(
         self,
         query: str,
