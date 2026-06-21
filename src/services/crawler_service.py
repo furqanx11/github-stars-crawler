@@ -50,7 +50,7 @@ class CrawlerService:
                 self._repos_crawled = latest.repos_crawled
         else:
             run_id = await self._crawl_repo.create_run(self._crawl_target)
-            windows = generate_search_windows(self.GITHUB_LAUNCH, date.today())
+            windows = generate_search_windows(self.GITHUB_LAUNCH, date.today(), max_windows=100)
             await self._crawl_repo.ensure_checkpoints(run_id, windows)
 
         checkpoints = await self._crawl_repo.get_pending_checkpoints(run_id)
@@ -227,12 +227,15 @@ class CrawlerService:
         return False
 
 
-def generate_search_windows(start: date, end: date) -> list[str]:
+def generate_search_windows(start: date, end: date, max_windows: int = 100) -> list[str]:
     """Generate monthly search windows; dense windows are bisected at crawl time."""
     windows: list[str] = []
     current = date(start.year, start.month, 1)
 
     while current <= end:
+        if len(windows) >= max_windows:
+            break
+
         last_day = calendar.monthrange(current.year, current.month)[1]
         month_end = date(current.year, current.month, last_day)
         if month_end > end:
